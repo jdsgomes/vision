@@ -6,6 +6,7 @@ from typing import Any
 from typing import Callable, Optional, List, Dict
 import torch
 from torch import Tensor, nn
+from torch.nn import Sequential
 from torchvision.models._api import WeightsEnum
 
 from ...utils import _log_api_usage_once
@@ -132,6 +133,9 @@ class PreactivatedBottleneckTransformation(nn.Module):
         if not disable_pre_activation:
             self.branch2a_bn = nn.BatchNorm3d(dim_in, eps=bn_eps, momentum=bn_mmt)
             self.branch2a_relu = nn.ReLU(inplace=inplace_relu)
+        else:
+            self.branch2a_bn = nn.Identity()
+            self.branch2a_relu = nn.Identity()
 
         self.branch2a = nn.Conv3d(
             dim_in,
@@ -168,9 +172,8 @@ class PreactivatedBottleneckTransformation(nn.Module):
 
     def forward(self, x: torch.Tensor):
         # Branch2a
-        if not self.disable_pre_activation:
-            x = self.branch2a_bn(x)
-            x = self.branch2a_relu(x)
+        x = self.branch2a_bn(x)
+        x = self.branch2a_relu(x)
         x = self.branch2a(x)
         # Branch2b
         x = self.branch2b_bn(x)
@@ -233,12 +236,13 @@ class PreactivatedShortcutTransformation(nn.Module):
         disable_pre_activation=False,
         **kwargs,
     ):
-        super(PreactivatedShortcutTransformation, self).__init__()
+        super().__init__()
         # Use skip connection with projection if dim or spatial/temporal res change.
         assert (dim_in != dim_out) or (spatial_stride != 1) or (temporal_stride != 1)
         if not disable_pre_activation:
             self.branch1_bn = nn.BatchNorm3d(dim_in, eps=bn_eps, momentum=bn_mmt)
             self.branch1_relu = nn.ReLU(inplace=inplace_relu)
+        
         self.branch1 = nn.Conv3d(
             dim_in,
             dim_out,
@@ -247,6 +251,7 @@ class PreactivatedShortcutTransformation(nn.Module):
             padding=0,
             bias=False,
         )
+        self.stride = [temporal_stride, spatial_stride, spatial_stride]
 
     def forward(self, x: torch.Tensor):
         if hasattr(self, "branch1_bn") and hasattr(self, "branch1_relu"):
@@ -291,6 +296,8 @@ class ResBlock(nn.Module):
                 bn_mmt=bn_mmt,
                 disable_pre_activation=disable_pre_activation,
             )
+        else:
+            self.skip = nn.Identity()
 
         self.residual = residual_transformation(
             dim_in,
@@ -306,10 +313,14 @@ class ResBlock(nn.Module):
         self.relu = nn.ReLU(inplace_relu)
 
     def forward(self, x: torch.Tensor):
-        if hasattr(self, "skip"):
-            x = self.skip(x) + self.residual(x)
-        else:
-            x = x + self.residual(x)
+        skip_out = self.skip(x)
+        residual_out = self.residual(x)
+        if not isinstance(self.skip, nn.Identity):
+            print(self.skip.stride)
+        print(x.shape)
+        print(skip_out.shape)
+        print(residual_out.shape)
+        x = skip_out + residual_out
         x = self.relu(x)
         return x
 
@@ -322,6 +333,7 @@ class ResStage(nn.Module):
         "Slowfast networks for video recognition."
         https://arxiv.org/pdf/1812.03982.pdf
     """
+    pathways: Dict[str, Sequential]
 
     def __init__(
         self,
@@ -347,7 +359,8 @@ class ResStage(nn.Module):
         ResStage builds p streams, where p can be greater or equal to one.
         """
         super().__init__()
-
+     
+        self.pathways = {}
         if (
             len(
                 {
@@ -398,8 +411,8 @@ class ResStage(nn.Module):
                     bn_mmt=bn_mmt,
                     disable_pre_activation=block_disable_pre_activation,
                 )
-                block_name = self._block_name(p, stage_idx, i)
-                blocks.append((block_name, res_block))
+                
+                blocks.append(res_block)
 
             if final_stage and (isinstance(residual_transformation, PreactivatedBottleneckTransformation)):
                 # For pre-activation residual transformation, we conduct
@@ -407,25 +420,28 @@ class ResStage(nn.Module):
                 # through the head
                 activate_bn = nn.BatchNorm3d(dim_out[p])
                 activate_relu = nn.ReLU(inplace=True)
-                activate_bn_name = "-".join([block_name, "bn"])
-                activate_relu_name = "-".join([block_name, "relu"])
-                blocks.append((activate_bn_name, activate_bn))
-                blocks.append((activate_relu_name, activate_relu))
+                blocks.append(activate_bn)
+                blocks.append(activate_relu)
 
-            self.add_module(self._pathway_name(p), nn.Sequential(OrderedDict(blocks)))
+            pathway = nn.Sequential(*blocks)
+            pathway_name = self._pathway_name(p)
+            self.add_module(pathway_name, pathway)
+            self.pathways[pathway_name] = pathway
+            
 
     def _block_name(self, pathway_idx: int, stage_idx: int, block_idx: int):
         return "pathway{}-stage{}-block{}".format(pathway_idx, stage_idx, block_idx)
 
-    def _pathway_name(self, pathway_idx: int):
+    def _pathway_name(self, pathway_idx: int) -> str:
         return "pathway{}".format(pathway_idx)
 
+    
     def forward(self, inputs: List[torch.Tensor]):
         output = []
         for p in range(self.num_pathways):
             x = inputs[p]
-            pathway_module = getattr(self, self._pathway_name(p))
-            output.append(pathway_module(x))
+            pathway_module = self.pathways[self._pathway_name(p)]
+            output.append(pathway_module.forward(x))
         return output
 
 
@@ -488,7 +504,8 @@ class ResNeXt3DStemMultiPathway(nn.Module):
     Video 3D stem module. Provides stem operations of Conv, BN, ReLU, MaxPool
     on input data tensor for one or multiple pathways.
     """
-
+    blocks: Dict[str, ResNeXt3DStemSinglePathway]
+    
     def __init__(
         self,
         dim_in: int,
@@ -502,7 +519,7 @@ class ResNeXt3DStemMultiPathway(nn.Module):
     ):
         super().__init__()
 
-        if len({len(dim_in), len(dim_out), len(kernel), len(stride), len(padding)}) != 1:
+        if len(dim_in) != len(dim_out) or len(dim_in) != len(kernel) or len(dim_in) != len(stride) or len(dim_in) != len(padding):
             raise ValueError("The following arguments should have equal legth: dim_in, dim_out, kernel, stride")
         self.num_pathways = len(dim_in)
         self.kernel = kernel
@@ -513,7 +530,7 @@ class ResNeXt3DStemMultiPathway(nn.Module):
         self.bn_mmt = bn_mmt
 
         # Construct the stem layer.
-        self.blocks: Dict[str, ResNeXt3DStemSinglePathway] = {}
+        self.blocks = {}
         for p in range(len(dim_in)):
             stem = ResNeXt3DStemSinglePathway(
                 dim_in[p],
@@ -528,16 +545,15 @@ class ResNeXt3DStemMultiPathway(nn.Module):
             stem_name = self._stem_name(p)
             self.add_module(stem_name, stem)
             self.blocks[stem_name] = stem
-        
 
     def _stem_name(self, path_idx: int) -> str:
         return "stem-path{}".format(path_idx)
 
     def forward(self, x: List[torch.Tensor]):
         for p in range(len(x)):
-            stem_name: str = self._stem_name(p)
-            stem = self.blocks[stem_name]
-            x[p] = stem(x[p])
+            stem_name = self._stem_name(p)
+            stem_block = self.blocks[stem_name]
+            x[p] = stem_block.forward(x[p])
         return x
 
 
@@ -555,13 +571,13 @@ class ResNeXt3DStem(nn.Module):
             [[temporal_kernel // 2, spatial_kernel // 2, spatial_kernel // 2]],  # padding
         )
 
-    def forward(self, x):
+    def forward(self, x: List[torch.Tensor]):
         return self.stem(x)
 
 
 class FullyConvolutionalLinear(nn.Module):
     def __init__(self, dim_in: int, num_classes: int):
-        super(FullyConvolutionalLinear, self).__init__()
+        super().__init__()
         # Perform FC in a fully convolutional manner. The FC layer will be
         # initialized with a different std comparing to convolutional layers.
         self.projection = nn.Linear(dim_in, num_classes, bias=True)
@@ -747,7 +763,7 @@ class ResNeXt3D(nn.Module):
             )
             stages.append(stage)
 
-        self.stages = nn.Sequential(*stages)
+        self.stages = nn.ModuleList(stages)
         self._init_parameter(zero_init_residual_transform)
         self.head = FullyConvolutionalLinearHead(
             num_classes=num_classes,
@@ -776,14 +792,15 @@ class ResNeXt3D(nn.Module):
                 nn.init.normal_(m.weight, mean=0.0, std=0.01)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x: Tensor):
+    def forward(self, x: torch.Tensor):
         """
         Args:
             x (torch.Tensor): video input with shape N x C x T x H x W.
         """
         # single pathway input (make list out of tensor input)
         out = self.stem([x])
-        out = self.stages(out)
+        for stage in self.stages:
+            out = stage(out)
         # single pathway output get first element from the list before head
         out = self.head(out[0])
 
