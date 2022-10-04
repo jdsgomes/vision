@@ -11,7 +11,26 @@ using namespace ffmpeg;
 namespace vision {
 namespace video {
 
-struct Video : torch::CustomClassHolder {
+
+Struct VideoBase:
+  
+
+struct VideoTensor
+
+struct VideoForTensor : VideoBase {
+  
+ public:
+  Video(torch::Tensor videoData, std::string stream, int64_t numThreads);
+  
+}; // struct VideoForTensor
+struct Video : VideoBase {
+  
+ public:
+  Video(std::string videoPath, std::string stream, int64_t numThreads);
+  
+}; // struct VideoBase
+
+struct VideoBase : torch::CustomClassHolder {
   std::tuple<std::string, long> current_stream; // stream type, id
   // global video metadata
   c10::Dict<std::string, c10::Dict<std::string, std::vector<double>>>
@@ -20,7 +39,8 @@ struct Video : torch::CustomClassHolder {
 
  public:
   Video(std::string videoPath, std::string stream, int64_t numThreads);
-  Video(torch::Tensor videoData, std::string stream, int64_t numThreads);
+  init_path(std::string videoPath, std::string stream, int64_t numThreads);
+  init_tensor(torch::Tensor videoData, std::string stream, int64_t numThreads);
 
   std::tuple<std::string, int64_t> getCurrentStream() const;
   c10::Dict<std::string, c10::Dict<std::string, std::vector<double>>>
@@ -57,7 +77,7 @@ struct Video : torch::CustomClassHolder {
   SyncDecoder decoder;
   DecoderParameters params;
 
-}; // struct Video
+}; // struct VideoBase
 
 } // namespace video
 } // namespace vision

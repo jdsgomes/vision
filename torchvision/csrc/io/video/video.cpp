@@ -233,10 +233,14 @@ Video::Video(torch::Tensor videoData, std::string stream, int64_t numThreads) {
   Video::_init(stream, numThreads);
 }
   
-Video::Video(std::string videoPath, std::string stream, int64_t numThreads) {
+
+Video::Video(std::string videoPath, std::string stream, int64_t numThreads, torch::Tensor videoData=nullptr) {
   params.uri = videoPath;
   Video::_init(stream, numThreads);
 }
+
+
+
 
 bool Video::setCurrentStream(std::string stream = "video") {
   if ((!stream.empty()) && (_parseStream(stream) != current_stream)) {
