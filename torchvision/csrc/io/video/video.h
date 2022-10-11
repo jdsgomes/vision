@@ -11,25 +11,6 @@ using namespace ffmpeg;
 namespace vision {
 namespace video {
 
-
-Struct VideoBase:
-  
-
-struct VideoTensor
-
-struct VideoForTensor : VideoBase {
-  
- public:
-  Video(torch::Tensor videoData, std::string stream, int64_t numThreads);
-  
-}; // struct VideoForTensor
-struct Video : VideoBase {
-  
- public:
-  Video(std::string videoPath, std::string stream, int64_t numThreads);
-  
-}; // struct VideoBase
-
 struct VideoBase : torch::CustomClassHolder {
   std::tuple<std::string, long> current_stream; // stream type, id
   // global video metadata
@@ -38,9 +19,7 @@ struct VideoBase : torch::CustomClassHolder {
   int64_t numThreads_{0};
 
  public:
-  Video(std::string videoPath, std::string stream, int64_t numThreads);
-  init_path(std::string videoPath, std::string stream, int64_t numThreads);
-  init_tensor(torch::Tensor videoData, std::string stream, int64_t numThreads);
+  VideoBase();
 
   std::tuple<std::string, int64_t> getCurrentStream() const;
   c10::Dict<std::string, c10::Dict<std::string, std::vector<double>>>
@@ -56,7 +35,7 @@ struct VideoBase : torch::CustomClassHolder {
   // time in comination with any_frame settings
   double seekTS = -1;
 
-  void _init(std::string stream, int64_t numThreads);
+  
 
   void _getDecoderParams(
       double videoStartS,
@@ -70,14 +49,26 @@ struct VideoBase : torch::CustomClassHolder {
 
   std::map<std::string, std::vector<double>> streamTimeBase; // not used
 
-  DecoderInCallback callback = nullptr;
+  
   std::vector<DecoderMetadata> metadata;
 
  protected:
   SyncDecoder decoder;
   DecoderParameters params;
-
+  DecoderInCallback callback = nullptr;
+  void _init(std::string stream, int64_t numThreads);
 }; // struct VideoBase
+
+struct VideoFromTensor : VideoBase {  
+ public:
+  VideoFromTensor(torch::Tensor videoData, std::string stream, int64_t numThreads);
+  
+}; // struct VideoFromTensor
+struct Video : VideoBase {
+ public:
+  Video(std::string videoPath, std::string stream, int64_t numThreads);
+}; // struct Video
+
 
 } // namespace video
 } // namespace vision

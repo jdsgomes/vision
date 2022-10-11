@@ -93,7 +93,7 @@ std::tuple<std::string, long> _parseStream(const std::string& streamString) {
 
 } // namespace
 
-void Video::_getDecoderParams(
+void VideoBase::_getDecoderParams(
     double videoStartS,
     int64_t getPtsOnly,
     std::string stream,
@@ -156,14 +156,14 @@ void Video::_getDecoderParams(
 
 } // _get decoder params
 
-void Video::_init(std::string stream, int64_t numThreads) {
+void VideoBase::_init(std::string stream, int64_t numThreads) {
   C10_LOG_API_USAGE_ONCE("torchvision.csrc.io.video.video.Video");
   // set number of threads global
   numThreads_ = numThreads;
   // parse stream information
   current_stream = _parseStream(stream);
   // note that in the initial call we want to get all streams
-  Video::_getDecoderParams(
+  VideoBase::_getDecoderParams(
       0, // video start
       0, // headerOnly
       std::get<0>(current_stream), // stream info - remove that
@@ -172,7 +172,7 @@ void Video::_init(std::string stream, int64_t numThreads) {
       true, // read all streams
       numThreads_ // global number of Threads for decoding
   );
-
+  
   // locals
   std::vector<double> audioFPS, videoFPS;
   std::vector<double> audioDuration, videoDuration, ccDuration, subsDuration;
@@ -218,31 +218,17 @@ void Video::_init(std::string stream, int64_t numThreads) {
   streamsMetadata.insert("subtitles", subsMetadata);
   streamsMetadata.insert("cc", ccMetadata);
 
-  succeeded = Video::setCurrentStream(stream);
+  succeeded = VideoBase::setCurrentStream(stream);
   LOG(INFO) << "\nDecoder inited with: " << succeeded << "\n";
   if (std::get<1>(current_stream) != -1) {
     LOG(INFO)
         << "Stream index set to " << std::get<1>(current_stream)
         << ". If you encounter trouble, consider switching it to automatic stream discovery. \n";
   }
-} // Video::Init
+} // VideoBase::Init
 
 
-Video::Video(torch::Tensor videoData, std::string stream, int64_t numThreads) {
-  callback = MemoryBuffer::getCallback(videoData.data_ptr<uint8_t>(), videoData.size(0));
-  Video::_init(stream, numThreads);
-}
-  
-
-Video::Video(std::string videoPath, std::string stream, int64_t numThreads, torch::Tensor videoData=nullptr) {
-  params.uri = videoPath;
-  Video::_init(stream, numThreads);
-}
-
-
-
-
-bool Video::setCurrentStream(std::string stream = "video") {
+bool VideoBase::setCurrentStream(std::string stream = "video") {
   if ((!stream.empty()) && (_parseStream(stream) != current_stream)) {
     current_stream = _parseStream(stream);
   }
@@ -267,16 +253,16 @@ bool Video::setCurrentStream(std::string stream = "video") {
   return (decoder.init(params, std::move(callback), &metadata));
 }
 
-std::tuple<std::string, int64_t> Video::getCurrentStream() const {
+std::tuple<std::string, int64_t> VideoBase::getCurrentStream() const {
   return current_stream;
 }
 
-c10::Dict<std::string, c10::Dict<std::string, std::vector<double>>> Video::
+c10::Dict<std::string, c10::Dict<std::string, std::vector<double>>> VideoBase::
     getStreamMetadata() const {
   return streamsMetadata;
 }
 
-void Video::Seek(double ts, bool fastSeek = false) {
+void VideoBase::Seek(double ts, bool fastSeek = false) {
   // initialize the class variables used for seeking and retrurn
   _getDecoderParams(
       ts, // video start
@@ -294,7 +280,7 @@ void Video::Seek(double ts, bool fastSeek = false) {
   LOG(INFO) << "Decoder init at seek " << succeeded << "\n";
 }
 
-std::tuple<torch::Tensor, double> Video::Next() {
+std::tuple<torch::Tensor, double> VideoBase::Next() {
   // if failing to decode simply return a null tensor (note, should we
   // raise an exeption?)
   double frame_pts_s;
@@ -349,6 +335,18 @@ std::tuple<torch::Tensor, double> Video::Next() {
 
   return std::make_tuple(outFrame, frame_pts_s);
 }
+
+VideoFromTensor::VideoFromTensor(torch::Tensor videoData, std::string stream, int64_t numThreads) {
+  callback = MemoryBuffer::getCallback(videoData.data_ptr<uint8_t>(), videoData.size(0));
+  VideoBase::_init(stream, numThreads);
+}
+  
+
+Video::Video(std::string videoPath, std::string stream, int64_t numThreads) {
+  params.uri = videoPath;
+  VideoBase::_init(stream, numThreads);
+}
+
 
 static auto registerVideo =
     torch::class_<Video>("torchvision", "Video")
