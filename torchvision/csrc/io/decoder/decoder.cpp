@@ -207,18 +207,19 @@ bool Decoder::init(
     const DecoderParameters& params,
     DecoderInCallback&& in,
     std::vector<DecoderMetadata>* metadata) {
+  std::cout << "cleanup buffer" << std::endl;
   cleanUp();
-
+  std::cout << "check input params" << std::endl;
   if ((params.uri.empty() || in) && (!params.uri.empty() || !in)) {
     LOG(ERROR)
         << "uuid=" << params_.loggingUuid
         << " either external URI gets provided or explicit input callback";
     return false;
   }
-
+  std::cout << "set callback params" << std::endl;
   // set callback and params
   params_ = params;
-
+  std::cout << "set avformat_alloc_context" << std::endl;
   if (!(inputCtx_ = avformat_alloc_context())) {
     LOG(ERROR) << "uuid=" << params_.loggingUuid
                << " cannot allocate format context";
@@ -227,7 +228,9 @@ bool Decoder::init(
 
   AVInputFormat* fmt = nullptr;
   int result = 0;
+  std::cout << "check if in" << std::endl;
   if (in) {
+    std::cout << "in exists" << std::endl;
     ImageType type = ImageType::UNKNOWN;
     if ((result = seekableBuffer_.init(
              std::forward<DecoderInCallback>(in),
@@ -258,7 +261,7 @@ bool Decoder::init(
 
       fmt = (AVInputFormat*)av_find_input_format(fmtName);
     }
-
+    std::cout << "before alloc buffer" << std::endl;
     const size_t avioCtxBufferSize = kIoBufferSize;
     uint8_t* avioCtxBuffer =
         (uint8_t*)av_malloc(avioCtxBufferSize + kIoPaddingSize);
@@ -269,7 +272,8 @@ bool Decoder::init(
       cleanUp();
       return false;
     }
-
+    std::cout << "after alloc buffer" << std::endl;
+    std::cout << "before alloc content" << std::endl;
     if (!(avioCtx_ = avio_alloc_context(
               avioCtxBuffer,
               avioCtxBufferSize,
@@ -280,6 +284,7 @@ bool Decoder::init(
               result == 1 ? &Decoder::seekFunction : nullptr))) {
       LOG(ERROR) << "uuid=" << params_.loggingUuid
                  << " avio_alloc_context failed";
+      std::cout << "after alloc content" << std::endl;
       av_free(avioCtxBuffer);
       cleanUp();
       return false;
@@ -288,18 +293,20 @@ bool Decoder::init(
     inputCtx_->pb = avioCtx_;
     inputCtx_->flags |= AVFMT_FLAG_CUSTOM_IO;
   }
-
+  std::cout << "reinterpret cast" << std::endl;
   inputCtx_->opaque = reinterpret_cast<void*>(this);
   inputCtx_->interrupt_callback.callback = Decoder::shutdownFunction;
   inputCtx_->interrupt_callback.opaque = reinterpret_cast<void*>(this);
 
+  std::cout << "add network timeout" << std::endl;
   // add network timeout
   inputCtx_->flags |= AVFMT_FLAG_NONBLOCK;
-
+  std::cout << "check listen" << std::endl;
   AVDictionary* options = nullptr;
   if (params_.listen) {
     av_dict_set_int(&options, "listen", 1, 0);
   }
+  std::cout << "set timeout" << std::endl;
   if (params_.timeoutMs > 0) {
     av_dict_set_int(&options, "analyzeduration", params_.timeoutMs * 1000, 0);
     av_dict_set_int(&options, "stimeout", params_.timeoutMs * 1000, 0);
@@ -313,7 +320,7 @@ bool Decoder::init(
   }
 
   interrupted_ = false;
-
+  std::cout << "prevent staleness" << std::endl;
   // ffmpeg avformat_open_input call can hang if media source doesn't respond
   // set a guard for handle such situations, if requested
   std::promise<bool> p;
@@ -332,12 +339,14 @@ bool Decoder::init(
   }
 
   if (fmt) {
+    std::cout << "open input with fmpt " << std::endl;
     result = avformat_open_input(&inputCtx_, nullptr, fmt, &options);
   } else {
+    std::cout << "open input with fmt" << std::endl;
     result =
         avformat_open_input(&inputCtx_, params_.uri.c_str(), nullptr, &options);
   }
-
+  std::cout << "free options" << std::endl;
   av_dict_free(&options);
 
   if (guard) {
@@ -346,6 +355,7 @@ bool Decoder::init(
     guard.reset();
   }
 
+  std::cout << "interrupted" << std::endl;
   if (result < 0 || interrupted_) {
     LOG(ERROR) << "uuid=" << params_.loggingUuid
                << " avformat_open_input failed, error="
@@ -353,9 +363,10 @@ bool Decoder::init(
     cleanUp();
     return false;
   }
-
+  std::cout << "find stream info" << std::endl;
   result = avformat_find_stream_info(inputCtx_, nullptr);
 
+  std::cout << "log errors" << std::endl;
   if (result < 0) {
     LOG(ERROR) << "uuid=" << params_.loggingUuid
                << " avformat_find_stream_info failed, error="
@@ -369,9 +380,10 @@ bool Decoder::init(
     cleanUp();
     return false;
   }
+  std::cout << "onInit" << std::endl;
   // SyncDecoder inherits Decoder which would override onInit.
   onInit();
-
+  std::cout << "offset" << std::endl;
   if (params.startOffset != 0) {
     auto offset = params.startOffset <= params.seekAccuracy
         ? 0

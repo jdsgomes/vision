@@ -8,11 +8,9 @@ import torch
 from ..extension import _load_library
 
 
-try:
-    _load_library("video_reader")
-    _HAS_VIDEO_OPT = True
-except (ImportError, OSError):
-    _HAS_VIDEO_OPT = False
+
+_load_library("video_reader")
+_HAS_VIDEO_OPT = True
 
 default_timebase = Fraction(0, 1)
 

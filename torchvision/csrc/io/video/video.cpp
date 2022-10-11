@@ -93,6 +93,8 @@ std::tuple<std::string, long> _parseStream(const std::string& streamString) {
 
 } // namespace
 
+VideoBase::VideoBase() {}
+
 void VideoBase::_getDecoderParams(
     double videoStartS,
     int64_t getPtsOnly,
@@ -162,6 +164,7 @@ void VideoBase::_init(std::string stream, int64_t numThreads) {
   numThreads_ = numThreads;
   // parse stream information
   current_stream = _parseStream(stream);
+  
   // note that in the initial call we want to get all streams
   VideoBase::_getDecoderParams(
       0, // video start
@@ -181,9 +184,13 @@ void VideoBase::_init(std::string stream, int64_t numThreads) {
   c10::Dict<std::string, std::vector<double>> videoMetadata;
   c10::Dict<std::string, std::vector<double>> ccMetadata;
   c10::Dict<std::string, std::vector<double>> subsMetadata;
-
+  
+  std::cout << "before decoder init" << std::endl;
+  std::cout << params.uri << std::endl;
+  std::cout << (nullptr == callback)  << std::endl;
   // callback and metadata defined in struct
   succeeded = decoder.init(params, std::move(callback), &metadata);
+  std::cout << "after decoder init: " << succeeded << std::endl;
   if (succeeded) {
     for (const auto& header : metadata) {
       double fps = double(header.fps);
@@ -202,6 +209,7 @@ void VideoBase::_init(std::string stream, int64_t numThreads) {
       };
     }
   }
+  std::cout << "before adding metadata: " << std::endl;
   // audio
   audioMetadata.insert("duration", audioDuration);
   audioMetadata.insert("framerate", audioFPS);
@@ -217,8 +225,9 @@ void VideoBase::_init(std::string stream, int64_t numThreads) {
   streamsMetadata.insert("audio", audioMetadata);
   streamsMetadata.insert("subtitles", subsMetadata);
   streamsMetadata.insert("cc", ccMetadata);
-
+  std::cout << "after adding metadata: " << std::endl;
   succeeded = VideoBase::setCurrentStream(stream);
+  std::cout << "after set current stream: " << std::endl;
   LOG(INFO) << "\nDecoder inited with: " << succeeded << "\n";
   if (std::get<1>(current_stream) != -1) {
     LOG(INFO)
@@ -344,13 +353,32 @@ VideoFromTensor::VideoFromTensor(torch::Tensor videoData, std::string stream, in
 
 Video::Video(std::string videoPath, std::string stream, int64_t numThreads) {
   params.uri = videoPath;
+  
   VideoBase::_init(stream, numThreads);
 }
 
 
+static auto registerVideoBase =
+    torch::class_<VideoBase>("torchvision", "VideoBase")
+        .def(torch::init())
+        .def("get_current_stream", &Video::getCurrentStream)
+        .def("set_current_stream", &Video::setCurrentStream)
+        .def("get_metadata", &Video::getStreamMetadata)
+        .def("seek", &Video::Seek)
+        .def("next", &Video::Next);
+
 static auto registerVideo =
     torch::class_<Video>("torchvision", "Video")
         .def(torch::init<std::string, std::string, int64_t>())
+        .def("get_current_stream", &Video::getCurrentStream)
+        .def("set_current_stream", &Video::setCurrentStream)
+        .def("get_metadata", &Video::getStreamMetadata)
+        .def("seek", &Video::Seek)
+        .def("next", &Video::Next);
+
+static auto registerVideoFromTensor =
+    torch::class_<VideoFromTensor>("torchvision", "VideoFromTensor")
+        .def(torch::init<torch::Tensor, std::string, int64_t>())
         .def("get_current_stream", &Video::getCurrentStream)
         .def("set_current_stream", &Video::setCurrentStream)
         .def("get_metadata", &Video::getStreamMetadata)
