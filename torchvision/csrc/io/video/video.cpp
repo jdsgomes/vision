@@ -347,14 +347,13 @@ std::tuple<torch::Tensor, double> VideoBase::Next() {
 
 VideoFromTensor::VideoFromTensor(torch::Tensor videoData, std::string stream, int64_t numThreads) {
   callback = MemoryBuffer::getCallback(videoData.data_ptr<uint8_t>(), videoData.size(0));
-  VideoBase::_init(stream, numThreads);
+  _init(stream, numThreads);
 }
   
 
 Video::Video(std::string videoPath, std::string stream, int64_t numThreads) {
   params.uri = videoPath;
-  
-  VideoBase::_init(stream, numThreads);
+  _init(stream, numThreads);
 }
 
 
